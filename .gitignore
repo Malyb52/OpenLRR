@@ -67,3 +67,6 @@ _unused/
 # Everything in here (d3drm.lib, d3drm.def, inc/*)
 !/lib/d3drm/*.def
 !/lib/d3drm/*.lib
+
+# CMake build directories
+/build/
