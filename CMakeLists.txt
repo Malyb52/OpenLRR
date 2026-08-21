@@ -10,6 +10,7 @@ find_package(glfw3 REQUIRED)
 add_executable(openlrr
     src/openlrr/linux/main.cpp
     src/openlrr/linux/Platform.cpp
+    src/openlrr/input/InputBinding.cpp
 )
 
 target_include_directories(openlrr PRIVATE

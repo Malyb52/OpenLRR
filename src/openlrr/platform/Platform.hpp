@@ -13,7 +13,14 @@ namespace OpenLRR::Platform
         Off,
         GameArea
     };
-
+enum class Modifier : unsigned
+{
+    None  = 0,
+    Shift = 1 << 0,
+    Ctrl  = 1 << 1,
+    Alt   = 1 << 2,
+    Super = 1 << 3
+};
     enum class Key
     {
         Unknown,
@@ -149,7 +156,10 @@ namespace OpenLRR::Platform
     double GetCursorX();
     double GetCursorY();
 
+    unsigned GetScrollModifiers();
     double GetScrollX();
+
+    unsigned GetScrollModifiers();
     double GetScrollY();
 
     const char* GetKeyName(Key key);

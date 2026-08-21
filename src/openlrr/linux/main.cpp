@@ -1,4 +1,5 @@
 #include "platform/Platform.hpp"
+#include "input/InputBinding.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -57,8 +58,11 @@ int main()
                         diagnostic += " | ";
                     }
 
-                    diagnostic += "Mouse: ";
-                    diagnostic += GetMouseButtonName(button);
+                    const auto binding =
+                        OpenLRR::Input::MakeMouseBinding(button);
+
+                    diagnostic += "Binding: ";
+                    diagnostic += OpenLRR::Input::ToString(binding);
                 }
             }
 
@@ -75,38 +79,66 @@ int main()
                         diagnostic += " | ";
                     }
 
-                    diagnostic += "Key: ";
-                    diagnostic += GetKeyName(key);
+                    const auto binding =
+                        OpenLRR::Input::MakeKeyBinding(key);
+
+                    diagnostic += "Binding: ";
+                    diagnostic += OpenLRR::Input::ToString(binding);
                 }
             }
 
             if (GetScrollX() != 0.0 ||
-                GetScrollY() != 0.0)
-            {
-                if (!diagnostic.empty()) {
-                    diagnostic += " | ";
-                }
+    GetScrollY() != 0.0)
+{
+    if (!diagnostic.empty()) {
+        diagnostic += " | ";
+    }
 
-                diagnostic += "Scroll";
+    diagnostic += "Scroll: ";
 
-                if (GetScrollY() > 0.0) {
-                    diagnostic += ": Up";
-                }
-                else if (GetScrollY() < 0.0) {
-                    diagnostic += ": Down";
-                }
-                else if (GetScrollX() > 0.0) {
-                    diagnostic += ": Right";
-                }
-                else {
-                    diagnostic += ": Left";
-                }
-            }
+    const unsigned modifiers = GetScrollModifiers();
+
+    if (modifiers &
+        static_cast<unsigned>(Modifier::Ctrl))
+    {
+        diagnostic += "Ctrl+";
+    }
+
+    if (modifiers &
+        static_cast<unsigned>(Modifier::Shift))
+    {
+        diagnostic += "Shift+";
+    }
+
+    if (modifiers &
+        static_cast<unsigned>(Modifier::Alt))
+    {
+        diagnostic += "Alt+";
+    }
+
+    if (modifiers &
+        static_cast<unsigned>(Modifier::Super))
+    {
+        diagnostic += "Super+";
+    }
+
+    if (GetScrollY() > 0.0) {
+        diagnostic += "Up";
+    }
+    else if (GetScrollY() < 0.0) {
+        diagnostic += "Down";
+    }
+    else if (GetScrollX() > 0.0) {
+        diagnostic += "Right";
+    }
+    else {
+        diagnostic += "Left";
+    }
+}
 
             if (!diagnostic.empty()) {
                 const std::string title =
-                    std::string("OpenLRR - ") +
-                    diagnostic;
+                    std::string("OpenLRR - ") + diagnostic;
 
                 SetWindowTitle(title.c_str());
 
@@ -118,8 +150,7 @@ int main()
                      now >= temporaryTitleUntil)
             {
                 SetWindowTitle("OpenLRR");
-                temporaryTitleUntil =
-                    Clock::time_point{};
+                temporaryTitleUntil = Clock::time_point{};
             }
         }
 

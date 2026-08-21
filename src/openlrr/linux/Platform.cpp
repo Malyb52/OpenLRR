@@ -23,7 +23,7 @@ namespace
     int gWindowWidth = 0;
     int gWindowHeight = 0;
 
-    std::array<bool, KeyCount> gKeyDown{};
+        std::array<bool, KeyCount> gKeyDown{};
     std::array<bool, KeyCount> gKeyPressed{};
     std::array<bool, KeyCount> gKeyReleased{};
 
@@ -36,6 +36,7 @@ namespace
 
     double gScrollX = 0.0;
     double gScrollY = 0.0;
+    unsigned gScrollModifiers = 0;
 
     OpenLRR::Platform::CursorClipping gCursorClipping =
         OpenLRR::Platform::CursorClipping::Off;
@@ -48,6 +49,45 @@ namespace
     std::size_t MouseIndex(MouseButton button)
     {
         return static_cast<std::size_t>(button);
+    }
+
+    unsigned GetCurrentModifierMask()
+    {
+        unsigned modifiers = 0;
+
+        if (gKeyDown[KeyIndex(Key::LeftShift)] ||
+            gKeyDown[KeyIndex(Key::RightShift)])
+        {
+            modifiers |= static_cast<unsigned>(
+                OpenLRR::Platform::Modifier::Shift
+            );
+        }
+
+        if (gKeyDown[KeyIndex(Key::LeftControl)] ||
+            gKeyDown[KeyIndex(Key::RightControl)])
+        {
+            modifiers |= static_cast<unsigned>(
+                OpenLRR::Platform::Modifier::Ctrl
+            );
+        }
+
+        if (gKeyDown[KeyIndex(Key::LeftAlt)] ||
+            gKeyDown[KeyIndex(Key::RightAlt)])
+        {
+            modifiers |= static_cast<unsigned>(
+                OpenLRR::Platform::Modifier::Alt
+            );
+        }
+
+        if (gKeyDown[KeyIndex(Key::LeftSuper)] ||
+            gKeyDown[KeyIndex(Key::RightSuper)])
+        {
+            modifiers |= static_cast<unsigned>(
+                OpenLRR::Platform::Modifier::Super
+            );
+        }
+
+        return modifiers;
     }
 
     Key TranslateKey(int key)
@@ -274,6 +314,8 @@ namespace
     {
         gScrollX += xOffset;
         gScrollY += yOffset;
+
+        gScrollModifiers = GetCurrentModifierMask();
     }
 }
 
@@ -336,8 +378,9 @@ namespace OpenLRR::Platform
         gKeyReleased.fill(false);
 
         gMousePressed.fill(false);
-        gMouseReleased.fill(false);
+        gMouseReleased.fill(false);  
 
+        gScrollModifiers = 0;
         gScrollX = 0.0;
         gScrollY = 0.0;
     }
@@ -361,6 +404,11 @@ namespace OpenLRR::Platform
     int GetWindowHeight()
     {
         return gWindowHeight;
+    }
+
+    unsigned GetScrollModifiers()
+    {
+        return gScrollModifiers;
     }
 
     bool IsKeyDown(Key key)
