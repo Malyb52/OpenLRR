@@ -1,5 +1,7 @@
 #include "platform/Platform.hpp"
 #include "input/InputBinding.hpp"
+#include "input/InputActions.hpp"
+#include "renderer/VulkanRenderer.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -21,6 +23,36 @@ int main()
         Shutdown();
         return 1;
     }
+
+    if (!OpenLRR::Renderer::InitialiseVulkan()) {
+        std::cerr << "Failed to initialise Vulkan\n";
+        Shutdown();
+        return 1;
+    }
+
+    OpenLRR::Input::SetKeyBinding(
+        OpenLRR::Input::Action::TestAction1,
+        OpenLRR::Input::KeyBinding{
+            Key::F5,
+            0
+        }
+    );
+
+    OpenLRR::Input::SetKeyBinding(
+        OpenLRR::Input::Action::TestAction2,
+        OpenLRR::Input::KeyBinding{
+            Key::R,
+            static_cast<unsigned>(Modifier::Ctrl)
+        }
+    );
+
+    OpenLRR::Input::SetMouseBinding(
+        OpenLRR::Input::Action::TestAction3,
+        OpenLRR::Input::MouseBinding{
+            MouseButton::Middle,
+            static_cast<unsigned>(Modifier::Shift)
+        }
+    );
 
     auto temporaryTitleUntil = Clock::time_point{};
     bool wasActive = IsActive();
@@ -45,6 +77,21 @@ int main()
 
         if (active) {
             std::string diagnostic;
+
+            for (int value = 0;
+                 value < static_cast<int>(OpenLRR::Input::Action::Count);
+                 ++value)
+            {
+                const auto action =
+                    static_cast<OpenLRR::Input::Action>(value);
+
+                if (OpenLRR::Input::IsActionPressed(action)) {
+                    diagnostic += "Action: ";
+                    diagnostic +=
+                        OpenLRR::Input::GetActionName(action);
+                    break;
+                }
+            }
 
             for (int value = 0;
                  value < static_cast<int>(MouseButton::Count);
@@ -161,6 +208,8 @@ int main()
         );
     }
 
+    OpenLRR::Renderer::ShutdownVulkan();
     Shutdown();
+
     return 0;
 }

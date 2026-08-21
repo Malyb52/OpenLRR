@@ -367,6 +367,28 @@ namespace OpenLRR::Platform
         return true;
     }
 
+    const char** GetRequiredVulkanExtensions(unsigned* count)
+    {
+        return glfwGetRequiredInstanceExtensions(count);
+    }
+
+    bool CreateVulkanSurface(
+        VkInstance instance,
+        VkSurfaceKHR* surface
+    )
+    {
+        if (gWindow == nullptr || surface == nullptr) {
+            return false;
+        }
+
+        return glfwCreateWindowSurface(
+            instance,
+            gWindow,
+            nullptr,
+            surface
+        ) == VK_SUCCESS;
+    }
+
     void PollEvents()
     {
         glfwPollEvents();

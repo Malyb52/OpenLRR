@@ -1,4 +1,5 @@
 #pragma once
+#include <vulkan/vulkan.h>
 
 namespace OpenLRR::Platform
 {
@@ -135,6 +136,13 @@ enum class Modifier : unsigned
     void Shutdown();
 
     bool CreateWindow(int width, int height, const char* title);
+
+    const char** GetRequiredVulkanExtensions(unsigned* count);
+
+    bool CreateVulkanSurface(
+        VkInstance instance,
+        VkSurfaceKHR* surface
+    );
 
     void PollEvents();
     void BeginInputFrame();
