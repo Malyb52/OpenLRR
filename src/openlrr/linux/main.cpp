@@ -1,25 +1,135 @@
 #include "platform/Platform.hpp"
 
+#include <chrono>
 #include <iostream>
+#include <string>
+#include <thread>
 
 int main()
 {
-    if (!OpenLRR::Platform::Initialise()) {
+    using namespace OpenLRR::Platform;
+    using Clock = std::chrono::steady_clock;
+
+    if (!Initialise()) {
         std::cerr << "Failed to initialise platform\n";
         return 1;
     }
 
-    if (!OpenLRR::Platform::CreateWindow(800, 600, "OpenLRR")) {
+    if (!CreateWindow(800, 600, "OpenLRR")) {
         std::cerr << "Failed to create window\n";
-        OpenLRR::Platform::Shutdown();
+        Shutdown();
         return 1;
     }
 
-    while (!OpenLRR::Platform::ShouldClose()) {
-        OpenLRR::Platform::PollEvents();
+    auto temporaryTitleUntil = Clock::time_point{};
+    bool wasActive = IsActive();
+
+    while (!ShouldClose()) {
+        BeginInputFrame();
+        PollEvents();
+
+        const bool active = IsActive();
+        const auto now = Clock::now();
+
+        if (active != wasActive) {
+            temporaryTitleUntil = Clock::time_point{};
+
+            if (active) {
+                SetWindowTitle("OpenLRR");
+            }
+            else {
+                SetWindowTitle("OpenLRR - Focus lost");
+            }
+        }
+
+        if (active) {
+            std::string diagnostic;
+
+            for (int value = 0;
+                 value < static_cast<int>(MouseButton::Count);
+                 ++value)
+            {
+                const auto button =
+                    static_cast<MouseButton>(value);
+
+                if (WasMouseButtonPressed(button)) {
+                    if (!diagnostic.empty()) {
+                        diagnostic += " | ";
+                    }
+
+                    diagnostic += "Mouse: ";
+                    diagnostic += GetMouseButtonName(button);
+                }
+            }
+
+            for (int value =
+                     static_cast<int>(Key::Unknown) + 1;
+                 value < static_cast<int>(Key::Count);
+                 ++value)
+            {
+                const auto key =
+                    static_cast<Key>(value);
+
+                if (WasKeyPressed(key)) {
+                    if (!diagnostic.empty()) {
+                        diagnostic += " | ";
+                    }
+
+                    diagnostic += "Key: ";
+                    diagnostic += GetKeyName(key);
+                }
+            }
+
+            if (GetScrollX() != 0.0 ||
+                GetScrollY() != 0.0)
+            {
+                if (!diagnostic.empty()) {
+                    diagnostic += " | ";
+                }
+
+                diagnostic += "Scroll";
+
+                if (GetScrollY() > 0.0) {
+                    diagnostic += ": Up";
+                }
+                else if (GetScrollY() < 0.0) {
+                    diagnostic += ": Down";
+                }
+                else if (GetScrollX() > 0.0) {
+                    diagnostic += ": Right";
+                }
+                else {
+                    diagnostic += ": Left";
+                }
+            }
+
+            if (!diagnostic.empty()) {
+                const std::string title =
+                    std::string("OpenLRR - ") +
+                    diagnostic;
+
+                SetWindowTitle(title.c_str());
+
+                temporaryTitleUntil =
+                    now + std::chrono::milliseconds(700);
+            }
+            else if (temporaryTitleUntil !=
+                         Clock::time_point{} &&
+                     now >= temporaryTitleUntil)
+            {
+                SetWindowTitle("OpenLRR");
+                temporaryTitleUntil =
+                    Clock::time_point{};
+            }
+        }
+
+        wasActive = active;
+
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(1)
+        );
     }
 
-    OpenLRR::Platform::Shutdown();
-
+    Shutdown();
     return 0;
 }
