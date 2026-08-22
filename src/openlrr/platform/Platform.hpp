@@ -153,6 +153,10 @@ enum class Modifier : unsigned
     int GetWindowWidth();
     int GetWindowHeight();
 
+    void GetFramebufferSize(int* width, int* height);
+
+	bool WasFramebufferResized();
+
     bool IsKeyDown(Key key);
     bool WasKeyPressed(Key key);
     bool WasKeyReleased(Key key);

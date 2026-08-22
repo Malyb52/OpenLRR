@@ -22,8 +22,10 @@ namespace
 
     int gWindowWidth = 0;
     int gWindowHeight = 0;
+	
+	bool gFramebufferResized = false;
 
-        std::array<bool, KeyCount> gKeyDown{};
+	std::array<bool, KeyCount> gKeyDown{};
     std::array<bool, KeyCount> gKeyPressed{};
     std::array<bool, KeyCount> gKeyReleased{};
 
@@ -264,6 +266,14 @@ namespace
         gWindowHeight = height;
     }
 
+void FramebufferSizeCallback(
+    GLFWwindow*,
+    int,
+    int)
+{
+    gFramebufferResized = true;
+}
+
     void KeyCallback(GLFWwindow*, int key, int, int action, int)
     {
         const Key translated = TranslateKey(key);
@@ -359,6 +369,7 @@ namespace OpenLRR::Platform
 
         glfwSetWindowFocusCallback(gWindow, FocusCallback);
         glfwSetWindowSizeCallback(gWindow, WindowSizeCallback);
+		glfwSetFramebufferSizeCallback(gWindow,FramebufferSizeCallback);
         glfwSetKeyCallback(gWindow, KeyCallback);
         glfwSetMouseButtonCallback(gWindow, MouseButtonCallback);
         glfwSetCursorPosCallback(gWindow, CursorPositionCallback);
@@ -427,6 +438,37 @@ namespace OpenLRR::Platform
     {
         return gWindowHeight;
     }
+
+void GetFramebufferSize(int* width, int* height)
+{
+    if (gWindow == nullptr) {
+        if (width != nullptr) {
+            *width = 0;
+        }
+
+        if (height != nullptr) {
+            *height = 0;
+        }
+
+        return;
+    }
+
+    glfwGetFramebufferSize(
+        gWindow,
+        width,
+        height
+    );
+}
+
+	bool WasFramebufferResized()
+	{
+		const bool resized =
+			gFramebufferResized;
+
+			gFramebufferResized = false;
+
+		return resized;
+	}
 
     unsigned GetScrollModifiers()
     {

@@ -64,6 +64,62 @@ int main()
         const bool active = IsActive();
         const auto now = Clock::now();
 
+        if (active) {
+            OpenLRR::Renderer::SetClearColor(
+                0.08f,
+                0.15f,
+                0.32f,
+                1.0f
+            );
+
+            if (OpenLRR::Platform::IsKeyDown(
+                    OpenLRR::Platform::Key::F5))
+            {
+                OpenLRR::Renderer::SetClearColor(
+                    1.0f,
+                    0.0f,
+                    0.0f,
+                    1.0f
+                );
+            }
+
+            const bool ctrlDown =
+                OpenLRR::Platform::IsKeyDown(
+                    OpenLRR::Platform::Key::LeftControl) ||
+                OpenLRR::Platform::IsKeyDown(
+                    OpenLRR::Platform::Key::RightControl);
+
+            if (ctrlDown &&
+                OpenLRR::Platform::IsKeyDown(
+                    OpenLRR::Platform::Key::R))
+            {
+                OpenLRR::Renderer::SetClearColor(
+                    0.0f,
+                    1.0f,
+                    0.0f,
+                    1.0f
+                );
+            }
+
+            const bool shiftDown =
+                OpenLRR::Platform::IsKeyDown(
+                    OpenLRR::Platform::Key::LeftShift) ||
+                OpenLRR::Platform::IsKeyDown(
+                    OpenLRR::Platform::Key::RightShift);
+
+            if (shiftDown &&
+                OpenLRR::Platform::IsMouseButtonDown(
+                    OpenLRR::Platform::MouseButton::Middle))
+            {
+                OpenLRR::Renderer::SetClearColor(
+                    0.0f,
+                    0.0f,
+                    1.0f,
+                    1.0f
+                );
+            }
+        }
+
         if (active != wasActive) {
             temporaryTitleUntil = Clock::time_point{};
 
@@ -199,6 +255,12 @@ int main()
                 SetWindowTitle("OpenLRR");
                 temporaryTitleUntil = Clock::time_point{};
             }
+        }
+
+        if (!OpenLRR::Renderer::RenderFrame()) {
+            std::cerr
+                << "Vulkan frame rendering failed\n";
+            break;
         }
 
         wasActive = active;
