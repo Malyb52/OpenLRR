@@ -1,5 +1,8 @@
 #include "renderer/VulkanRenderer.hpp"
+#include "renderer/PresentationViewport.hpp"
 #include "platform/Platform.hpp"
+#include "settings/Settings.hpp"
+
 
 #include <vulkan/vulkan.h>
 
@@ -10,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <stdexcept>
 
 // OpenLRR screen-space convention:
 //
@@ -55,6 +59,22 @@ VkExtent2D gSwapchainExtent{};
 
 std::vector<VkImage> gSwapchainImages;
 std::vector<VkImageView> gSwapchainImageViews;
+
+VkImage gRenderImage = VK_NULL_HANDLE;
+VkDeviceMemory gRenderImageMemory = VK_NULL_HANDLE;
+VkImageView gRenderImageView = VK_NULL_HANDLE;
+
+VkFormat gRenderImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+VkExtent2D gRenderImageExtent{};
+
+bool gRenderImageInitialised = false;
+
+uint32_t gCurrentImageIndex = 0;
+
+OpenLRR::Renderer::PresentationViewport
+    gCurrentPresentation{};
+
+bool gFrameInProgress = false;
 
 float gClearColor[4] = {
     0.08f,
@@ -405,6 +425,283 @@ VkExtent2D ChooseSwapchainExtent(
     );
 
     return extent;
+}
+
+uint32_t FindMemoryType(
+    uint32_t typeFilter,
+    VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+
+    vkGetPhysicalDeviceMemoryProperties(
+        gPhysicalDevice,
+        &memoryProperties
+    );
+
+    for (uint32_t i = 0;
+         i < memoryProperties.memoryTypeCount;
+         ++i)
+    {
+        const bool typeMatches =
+            (typeFilter & (1u << i)) != 0;
+
+        const bool propertiesMatch =
+            (memoryProperties.memoryTypes[i].propertyFlags &
+             properties) == properties;
+
+        if (typeMatches && propertiesMatch) {
+            return i;
+        }
+    }
+
+    throw std::runtime_error(
+        "Failed to find suitable Vulkan memory type"
+    );
+}
+
+bool CreateRenderImage(
+    int width,
+    int height)
+{
+    if (width <= 0 || height <= 0) {
+        std::cerr
+            << "Invalid render image size\n";
+        return false;
+    }
+
+    VkImageCreateInfo imageInfo{};
+
+    imageInfo.sType =
+        VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+
+    imageInfo.imageType =
+        VK_IMAGE_TYPE_2D;
+
+    imageInfo.extent.width =
+        static_cast<uint32_t>(width);
+
+    imageInfo.extent.height =
+        static_cast<uint32_t>(height);
+
+    imageInfo.extent.depth = 1;
+
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+
+    imageInfo.format =
+        gRenderImageFormat;
+
+    imageInfo.tiling =
+        VK_IMAGE_TILING_OPTIMAL;
+
+    imageInfo.initialLayout =
+        VK_IMAGE_LAYOUT_UNDEFINED;
+
+    imageInfo.usage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    imageInfo.samples =
+        VK_SAMPLE_COUNT_1_BIT;
+
+    imageInfo.sharingMode =
+        VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateImage(
+            gDevice,
+            &imageInfo,
+            nullptr,
+            &gRenderImage) != VK_SUCCESS)
+    {
+        std::cerr
+            << "Failed to create Vulkan render image\n";
+        return false;
+    }
+
+    VkMemoryRequirements memoryRequirements{};
+
+    vkGetImageMemoryRequirements(
+        gDevice,
+        gRenderImage,
+        &memoryRequirements
+    );
+
+    VkMemoryAllocateInfo allocateInfo{};
+
+    allocateInfo.sType =
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+
+    allocateInfo.allocationSize =
+        memoryRequirements.size;
+
+    allocateInfo.memoryTypeIndex =
+        FindMemoryType(
+            memoryRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        );
+
+    if (vkAllocateMemory(
+            gDevice,
+            &allocateInfo,
+            nullptr,
+            &gRenderImageMemory) != VK_SUCCESS)
+    {
+        std::cerr
+            << "Failed to allocate Vulkan render image memory\n";
+
+        vkDestroyImage(
+            gDevice,
+            gRenderImage,
+            nullptr
+        );
+
+        gRenderImage =
+            VK_NULL_HANDLE;
+
+        return false;
+    }
+
+    if (vkBindImageMemory(
+            gDevice,
+            gRenderImage,
+            gRenderImageMemory,
+            0) != VK_SUCCESS)
+    {
+        std::cerr
+            << "Failed to bind Vulkan render image memory\n";
+
+        vkFreeMemory(
+            gDevice,
+            gRenderImageMemory,
+            nullptr
+        );
+
+        vkDestroyImage(
+            gDevice,
+            gRenderImage,
+            nullptr
+        );
+
+        gRenderImageMemory =
+            VK_NULL_HANDLE;
+
+        gRenderImage =
+            VK_NULL_HANDLE;
+
+        return false;
+    }
+
+    VkImageViewCreateInfo viewInfo{};
+
+    viewInfo.sType =
+        VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+
+    viewInfo.image =
+        gRenderImage;
+
+    viewInfo.viewType =
+        VK_IMAGE_VIEW_TYPE_2D;
+
+    viewInfo.format =
+        gRenderImageFormat;
+
+    viewInfo.components.r =
+        VK_COMPONENT_SWIZZLE_IDENTITY;
+
+    viewInfo.components.g =
+        VK_COMPONENT_SWIZZLE_IDENTITY;
+
+    viewInfo.components.b =
+        VK_COMPONENT_SWIZZLE_IDENTITY;
+
+    viewInfo.components.a =
+        VK_COMPONENT_SWIZZLE_IDENTITY;
+
+    viewInfo.subresourceRange.aspectMask =
+        VK_IMAGE_ASPECT_COLOR_BIT;
+
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(
+            gDevice,
+            &viewInfo,
+            nullptr,
+            &gRenderImageView) != VK_SUCCESS)
+    {
+        std::cerr
+            << "Failed to create Vulkan render image view\n";
+
+        vkFreeMemory(
+            gDevice,
+            gRenderImageMemory,
+            nullptr
+        );
+
+        vkDestroyImage(
+            gDevice,
+            gRenderImage,
+            nullptr
+        );
+
+        gRenderImageMemory =
+            VK_NULL_HANDLE;
+
+        gRenderImage =
+            VK_NULL_HANDLE;
+
+        return false;
+    }
+
+    gRenderImageExtent.width =
+        static_cast<uint32_t>(width);
+
+    gRenderImageExtent.height =
+        static_cast<uint32_t>(height);
+
+    return true;
+}
+
+void DestroyRenderImage()
+{
+    if (gRenderImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(
+            gDevice,
+            gRenderImageView,
+            nullptr
+        );
+
+        gRenderImageView =
+            VK_NULL_HANDLE;
+    }
+
+    if (gRenderImage != VK_NULL_HANDLE) {
+        vkDestroyImage(
+            gDevice,
+            gRenderImage,
+            nullptr
+        );
+
+        gRenderImage =
+            VK_NULL_HANDLE;
+    }
+
+    if (gRenderImageMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(
+            gDevice,
+            gRenderImageMemory,
+            nullptr
+        );
+
+        gRenderImageMemory =
+            VK_NULL_HANDLE;
+    }
+
+    gRenderImageExtent = {};
+	gRenderImageInitialised = false;
 }
 
 bool CreateLogicalDevice()
@@ -1004,8 +1301,11 @@ bool RecreateSwapchain()
 return true;
 }
 
-bool RenderClearFrame()
+bool BeginFrameInternal(
+    const OpenLRR::Settings::Resolution& renderResolution)
 {
+    gFrameInProgress = false;
+
          const auto now =
         std::chrono::steady_clock::now();
 
@@ -1029,6 +1329,20 @@ bool RenderClearFrame()
     {
         return true;
     }
+
+	gCurrentPresentation =
+    OpenLRR::Renderer::CalculatePresentationViewport(
+        framebufferWidth,
+        framebufferHeight,
+        renderResolution.width,
+        renderResolution.height
+    );
+
+if (gCurrentPresentation.width <= 0 ||
+    gCurrentPresentation.height <= 0)
+{
+    return true;
+}
 
     if (gSwapchainResizePending) {
         if (now - gLastFramebufferResizeEvent <
@@ -1060,8 +1374,6 @@ bool RenderClearFrame()
         UINT64_MAX
     );
 
-    uint32_t imageIndex = 0;
-
     const VkResult acquireResult =
         vkAcquireNextImageKHR(
             gDevice,
@@ -1069,7 +1381,7 @@ bool RenderClearFrame()
             UINT64_MAX,
             gImageAvailableSemaphore,
             VK_NULL_HANDLE,
-            &imageIndex
+            &gCurrentImageIndex
         );
 
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -1117,60 +1429,65 @@ bool RenderClearFrame()
         return false;
     }
 
-        VkImageMemoryBarrier toColorAttachmentBarrier{};
+	VkImageMemoryBarrier renderImageBarrier{};
 
-    toColorAttachmentBarrier.sType =
-        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	renderImageBarrier.sType =
+		VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 
-    toColorAttachmentBarrier.oldLayout =
-        gSwapchainImageInitialised[imageIndex]
-            ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-            : VK_IMAGE_LAYOUT_UNDEFINED;
+	renderImageBarrier.oldLayout =
+		gRenderImageInitialised
+			? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+			: VK_IMAGE_LAYOUT_UNDEFINED;
 
-    toColorAttachmentBarrier.newLayout =
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	renderImageBarrier.newLayout =
+		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    toColorAttachmentBarrier.srcQueueFamilyIndex =
-        VK_QUEUE_FAMILY_IGNORED;
+	renderImageBarrier.srcQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
 
-    toColorAttachmentBarrier.dstQueueFamilyIndex =
-        VK_QUEUE_FAMILY_IGNORED;
+	renderImageBarrier.dstQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
 
-    toColorAttachmentBarrier.image =
-        gSwapchainImages[imageIndex];
+	renderImageBarrier.image =
+		gRenderImage;
 
-    toColorAttachmentBarrier.subresourceRange.aspectMask =
-        VK_IMAGE_ASPECT_COLOR_BIT;
+	renderImageBarrier.subresourceRange.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
 
-    toColorAttachmentBarrier.subresourceRange.baseMipLevel = 0;
-    toColorAttachmentBarrier.subresourceRange.levelCount = 1;
-    toColorAttachmentBarrier.subresourceRange.baseArrayLayer = 0;
-    toColorAttachmentBarrier.subresourceRange.layerCount = 1;
+	renderImageBarrier.subresourceRange.baseMipLevel = 0;
+	renderImageBarrier.subresourceRange.levelCount = 1;
+	renderImageBarrier.subresourceRange.baseArrayLayer = 0;
+	renderImageBarrier.subresourceRange.layerCount = 1;
 
-    toColorAttachmentBarrier.srcAccessMask = 0;
+	renderImageBarrier.srcAccessMask =
+		gRenderImageInitialised
+			? VK_ACCESS_TRANSFER_READ_BIT
+			: 0;
 
-    toColorAttachmentBarrier.dstAccessMask =
-        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	renderImageBarrier.dstAccessMask =
+		VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-    vkCmdPipelineBarrier(
-        gCommandBuffer,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        1,
-        &toColorAttachmentBarrier
-    );
+	vkCmdPipelineBarrier(
+		gCommandBuffer,
+		gRenderImageInitialised
+			? VK_PIPELINE_STAGE_TRANSFER_BIT
+			: VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		0,
+		0,
+		nullptr,
+		0,
+		nullptr,
+		1,
+		&renderImageBarrier
+	);
 
     VkClearValue backgroundClear{};
 
-    backgroundClear.color.float32[0] = 0.04f;
-    backgroundClear.color.float32[1] = 0.04f;
-    backgroundClear.color.float32[2] = 0.04f;
-    backgroundClear.color.float32[3] = 1.0f;
+    backgroundClear.color.float32[0] = 0.0f;
+	backgroundClear.color.float32[1] = 0.0f;
+	backgroundClear.color.float32[2] = 0.0f;
+	backgroundClear.color.float32[3] = 1.0f;
 
     VkRenderingAttachmentInfo colorAttachment{};
 
@@ -1178,7 +1495,7 @@ bool RenderClearFrame()
         VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
 
     colorAttachment.imageView =
-        gSwapchainImageViews[imageIndex];
+		gRenderImageView;
 
     colorAttachment.imageLayout =
         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1198,12 +1515,12 @@ bool RenderClearFrame()
         VK_STRUCTURE_TYPE_RENDERING_INFO;
 
     renderingInfo.renderArea.offset = {
-        0,
-        0
-    };
+		0,
+		0
+	};
 
-    renderingInfo.renderArea.extent =
-        gSwapchainExtent;
+	renderingInfo.renderArea.extent =
+		gRenderImageExtent;
 
     renderingInfo.layerCount = 1;
 
@@ -1213,129 +1530,248 @@ bool RenderClearFrame()
         &colorAttachment;
 
     vkCmdBeginRendering(
-        gCommandBuffer,
-        &renderingInfo
-    );
+		gCommandBuffer,
+		&renderingInfo
+	);
 
-    constexpr uint32_t tileSize = 128;
+	gFrameInProgress = true;
 
-    const VkClearColorValue tileColors[] = {
-        {{ 0.10f, 0.20f, 0.55f, 1.0f }},
-        {{ 0.10f, 0.55f, 0.28f, 1.0f }},
-        {{ 0.55f, 0.18f, 0.16f, 1.0f }},
-        {{ 0.55f, 0.45f, 0.10f, 1.0f }}
-    };
+	return true;
+	}
 
-    for (uint32_t y = 0;
-         y < gSwapchainExtent.height;
-         y += tileSize)
-    {
-        for (uint32_t x = 0;
-             x < gSwapchainExtent.width;
-             x += tileSize)
-        {
-            const uint32_t tileX =
-                x / tileSize;
+	bool EndFrameInternal()
+	{
+		if (!gFrameInProgress) {
+			return true;
+		}
 
-            const uint32_t tileY =
-                y / tileSize;
+		vkCmdEndRendering(
+			gCommandBuffer
+		);
+    VkImageMemoryBarrier toTransferSourceBarrier{};
 
-            const uint32_t colorIndex =
-                (tileX + (tileY * 3)) % 4;
+	toTransferSourceBarrier.sType =
+		VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 
-            VkClearAttachment clearAttachment{};
+	toTransferSourceBarrier.oldLayout =
+		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-            clearAttachment.aspectMask =
-                VK_IMAGE_ASPECT_COLOR_BIT;
+	toTransferSourceBarrier.newLayout =
+		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
-            clearAttachment.colorAttachment = 0;
+	toTransferSourceBarrier.srcQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
 
-            clearAttachment.clearValue.color =
-                tileColors[colorIndex];
+	toTransferSourceBarrier.dstQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
 
-            VkClearRect clearRect{};
+	toTransferSourceBarrier.image =
+		gRenderImage;
 
-            clearRect.rect.offset = {
-                static_cast<int32_t>(x),
-                static_cast<int32_t>(y)
-            };
+	toTransferSourceBarrier.subresourceRange.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
 
-            clearRect.rect.extent.width =
-                std::min(
-                    tileSize,
-                    gSwapchainExtent.width - x
-                );
+	toTransferSourceBarrier.subresourceRange.baseMipLevel = 0;
+	toTransferSourceBarrier.subresourceRange.levelCount = 1;
+	toTransferSourceBarrier.subresourceRange.baseArrayLayer = 0;
+	toTransferSourceBarrier.subresourceRange.layerCount = 1;
 
-            clearRect.rect.extent.height =
-                std::min(
-                    tileSize,
-                    gSwapchainExtent.height - y
-                );
+	toTransferSourceBarrier.srcAccessMask =
+		VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-            clearRect.baseArrayLayer = 0;
-            clearRect.layerCount = 1;
+	toTransferSourceBarrier.dstAccessMask =
+		VK_ACCESS_TRANSFER_READ_BIT;
 
-            vkCmdClearAttachments(
-                gCommandBuffer,
-                1,
-                &clearAttachment,
-                1,
-                &clearRect
-            );
-        }
-    }
+	vkCmdPipelineBarrier(
+		gCommandBuffer,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0,
+		nullptr,
+		0,
+		nullptr,
+		1,
+		&toTransferSourceBarrier
+	);
 
-    vkCmdEndRendering(
-        gCommandBuffer
-    );
+	gRenderImageInitialised = true;
+	
+	VkImageMemoryBarrier swapchainToTransferDst{};
 
-    VkImageMemoryBarrier toPresentBarrier{};
+	swapchainToTransferDst.sType =
+		VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 
-    toPresentBarrier.sType =
-        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	swapchainToTransferDst.oldLayout =
+		gSwapchainImageInitialised[gCurrentImageIndex]
+			? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+			: VK_IMAGE_LAYOUT_UNDEFINED;
 
-    toPresentBarrier.oldLayout =
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	swapchainToTransferDst.newLayout =
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
-    toPresentBarrier.newLayout =
-        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	swapchainToTransferDst.srcQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
 
-    toPresentBarrier.srcQueueFamilyIndex =
-        VK_QUEUE_FAMILY_IGNORED;
+	swapchainToTransferDst.dstQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
 
-    toPresentBarrier.dstQueueFamilyIndex =
-        VK_QUEUE_FAMILY_IGNORED;
+	swapchainToTransferDst.image =
+		gSwapchainImages[gCurrentImageIndex];
 
-    toPresentBarrier.image =
-        gSwapchainImages[imageIndex];
+	swapchainToTransferDst.subresourceRange.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
 
-    toPresentBarrier.subresourceRange.aspectMask =
-        VK_IMAGE_ASPECT_COLOR_BIT;
+	swapchainToTransferDst.subresourceRange.baseMipLevel = 0;
+	swapchainToTransferDst.subresourceRange.levelCount = 1;
+	swapchainToTransferDst.subresourceRange.baseArrayLayer = 0;
+	swapchainToTransferDst.subresourceRange.layerCount = 1;
 
-    toPresentBarrier.subresourceRange.baseMipLevel = 0;
-    toPresentBarrier.subresourceRange.levelCount = 1;
-    toPresentBarrier.subresourceRange.baseArrayLayer = 0;
-    toPresentBarrier.subresourceRange.layerCount = 1;
+	swapchainToTransferDst.srcAccessMask = 0;
 
-    toPresentBarrier.srcAccessMask =
-        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	swapchainToTransferDst.dstAccessMask =
+		VK_ACCESS_TRANSFER_WRITE_BIT;
 
-    toPresentBarrier.dstAccessMask = 0;
+	vkCmdPipelineBarrier(
+		gCommandBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0,
+		nullptr,
+		0,
+		nullptr,
+		1,
+		&swapchainToTransferDst
+	);
+	
+	VkClearColorValue blackClear{};
 
-    vkCmdPipelineBarrier(
-        gCommandBuffer,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        1,
-        &toPresentBarrier
-    );
+	blackClear.float32[0] = 0.0f;
+	blackClear.float32[1] = 0.0f;
+	blackClear.float32[2] = 0.0f;
+	blackClear.float32[3] = 1.0f;
 
+	VkImageSubresourceRange clearRange{};
 
+	clearRange.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
+
+	clearRange.baseMipLevel = 0;
+	clearRange.levelCount = 1;
+	clearRange.baseArrayLayer = 0;
+	clearRange.layerCount = 1;
+
+	vkCmdClearColorImage(
+		gCommandBuffer,
+		gSwapchainImages[gCurrentImageIndex],
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		&blackClear,
+		1,
+		&clearRange
+	);
+	
+	VkImageBlit blitRegion{};
+
+	blitRegion.srcSubresource.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
+
+	blitRegion.srcSubresource.mipLevel = 0;
+	blitRegion.srcSubresource.baseArrayLayer = 0;
+	blitRegion.srcSubresource.layerCount = 1;
+
+	blitRegion.srcOffsets[0] = {
+		0,
+		0,
+		0
+	};
+
+	blitRegion.srcOffsets[1] = {
+		static_cast<int32_t>(gRenderImageExtent.width),
+		static_cast<int32_t>(gRenderImageExtent.height),
+		1
+	};
+
+	blitRegion.dstSubresource.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
+
+	blitRegion.dstSubresource.mipLevel = 0;
+	blitRegion.dstSubresource.baseArrayLayer = 0;
+	blitRegion.dstSubresource.layerCount = 1;
+
+	blitRegion.dstOffsets[0] = {
+		static_cast<int32_t>(gCurrentPresentation.x),
+		static_cast<int32_t>(gCurrentPresentation.y),
+		0
+	};
+
+	blitRegion.dstOffsets[1] = {
+		static_cast<int32_t>(
+			gCurrentPresentation.x + gCurrentPresentation.width
+		),
+		static_cast<int32_t>(
+			gCurrentPresentation.y + gCurrentPresentation.height
+		),
+		1
+	};
+
+	vkCmdBlitImage(
+		gCommandBuffer,
+		gRenderImage,
+		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		gSwapchainImages[gCurrentImageIndex],
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		1,
+		&blitRegion,
+		VK_FILTER_LINEAR
+	);
+	
+	VkImageMemoryBarrier swapchainToPresent{};
+
+	swapchainToPresent.sType =
+		VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+
+	swapchainToPresent.oldLayout =
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+	swapchainToPresent.newLayout =
+		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+	swapchainToPresent.srcQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
+
+	swapchainToPresent.dstQueueFamilyIndex =
+		VK_QUEUE_FAMILY_IGNORED;
+
+	swapchainToPresent.image =
+		gSwapchainImages[gCurrentImageIndex];
+
+	swapchainToPresent.subresourceRange.aspectMask =
+		VK_IMAGE_ASPECT_COLOR_BIT;
+
+	swapchainToPresent.subresourceRange.baseMipLevel = 0;
+	swapchainToPresent.subresourceRange.levelCount = 1;
+	swapchainToPresent.subresourceRange.baseArrayLayer = 0;
+	swapchainToPresent.subresourceRange.layerCount = 1;
+
+	swapchainToPresent.srcAccessMask =
+		VK_ACCESS_TRANSFER_WRITE_BIT;
+
+	swapchainToPresent.dstAccessMask = 0;
+
+	vkCmdPipelineBarrier(
+		gCommandBuffer,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0,
+		0,
+		nullptr,
+		0,
+		nullptr,
+		1,
+		&swapchainToPresent
+	);
+	
     if (vkEndCommandBuffer(
             gCommandBuffer) != VK_SUCCESS)
     {
@@ -1345,7 +1781,7 @@ bool RenderClearFrame()
     }
 
     const VkPipelineStageFlags waitStage =
-    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		VK_PIPELINE_STAGE_TRANSFER_BIT;
 
     VkSubmitInfo submitInfo{};
 
@@ -1381,7 +1817,7 @@ bool RenderClearFrame()
         return false;
     }
 
-    gSwapchainImageInitialised[imageIndex] = true;
+    gSwapchainImageInitialised[gCurrentImageIndex] = true;
 
     VkPresentInfoKHR presentInfo{};
 
@@ -1399,7 +1835,7 @@ bool RenderClearFrame()
         &gSwapchain;
 
     presentInfo.pImageIndices =
-        &imageIndex;
+        &gCurrentImageIndex;
 
     const VkResult presentResult =
         vkQueuePresentKHR(
@@ -1419,20 +1855,25 @@ bool RenderClearFrame()
 	}
 
     if (presentResult != VK_SUCCESS) {
-        std::cerr
-            << "Failed to present Vulkan frame\n";
-        return false;
-    }
+		std::cerr
+			<< "Failed to present Vulkan frame\n";
 
-    return true;
-}
+		gFrameInProgress = false;
+		return false;
+	}
+
+	gFrameInProgress = false;
+
+	return true;
+	}
 
 }
 
 namespace OpenLRR::Renderer
 {
-    bool InitialiseVulkan()
-    {
+    bool InitialiseVulkan(
+		const OpenLRR::Settings::Resolution& renderResolution)
+	{
         unsigned extensionCount = 0;
 
         const char** extensions =
@@ -1543,7 +1984,44 @@ namespace OpenLRR::Renderer
             return false;
         }
 
+		if (!CreateRenderImage(
+				renderResolution.width,
+				renderResolution.height))
+		{
+			std::cerr
+				<< "Failed to create canonical render image\n";
+
+			vkDestroyDevice(
+				gDevice,
+				nullptr
+			);
+
+			gDevice = VK_NULL_HANDLE;
+			gGraphicsQueue = VK_NULL_HANDLE;
+			gPresentQueue = VK_NULL_HANDLE;
+
+			vkDestroySurfaceKHR(
+				gInstance,
+				gSurface,
+				nullptr
+			);
+
+			gSurface = VK_NULL_HANDLE;
+
+			vkDestroyInstance(
+				gInstance,
+				nullptr
+			);
+
+			gInstance = VK_NULL_HANDLE;
+			gPhysicalDevice = VK_NULL_HANDLE;
+
+			return false;
+		}
+
         if (!CreateSwapchain()) {
+			DestroyRenderImage();
+			
             vkDestroyDevice(
                 gDevice,
                 nullptr
@@ -1719,10 +2197,90 @@ namespace OpenLRR::Renderer
         gClearColor[3] = alpha;
     }
 
-    bool RenderFrame()
+	    int GetRenderWidth()
     {
-        return RenderClearFrame();
+        return static_cast<int>(
+            gRenderImageExtent.width
+        );
     }
+
+    int GetRenderHeight()
+    {
+        return static_cast<int>(
+            gRenderImageExtent.height
+        );
+    }
+	
+	PresentationViewport GetPresentationViewport()
+    {
+        return gCurrentPresentation;
+    }
+	
+    void DrawFilledRect(
+        int x,
+        int y,
+        int width,
+        int height,
+        float red,
+        float green,
+        float blue,
+        float alpha)
+    {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+
+        VkClearAttachment clearAttachment{};
+
+        clearAttachment.aspectMask =
+            VK_IMAGE_ASPECT_COLOR_BIT;
+
+        clearAttachment.colorAttachment = 0;
+
+        clearAttachment.clearValue.color.float32[0] = red;
+        clearAttachment.clearValue.color.float32[1] = green;
+        clearAttachment.clearValue.color.float32[2] = blue;
+        clearAttachment.clearValue.color.float32[3] = alpha;
+
+        VkClearRect clearRect{};
+
+        clearRect.rect.offset = {
+            x,
+            y
+        };
+
+        clearRect.rect.extent = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height)
+        };
+
+        clearRect.baseArrayLayer = 0;
+        clearRect.layerCount = 1;
+
+        vkCmdClearAttachments(
+            gCommandBuffer,
+            1,
+            &clearAttachment,
+            1,
+            &clearRect
+        );
+    }
+
+    bool BeginFrame(
+		const OpenLRR::Settings::Resolution& renderResolution)
+	{
+		return BeginFrameInternal(renderResolution);
+	}
+
+	bool EndFrame()
+	{
+		return EndFrameInternal();
+	}
+
+	bool IsFrameInProgress()
+	{
+		return gFrameInProgress;
+	}
 
         void ShutdownVulkan()
     {
@@ -1804,6 +2362,10 @@ namespace OpenLRR::Renderer
 
             gSwapchainExtent = {};
         }
+	
+		if (gDevice != VK_NULL_HANDLE) {
+			DestroyRenderImage();
+		}
 	
         if (gDevice != VK_NULL_HANDLE) {
             vkDestroyDevice(

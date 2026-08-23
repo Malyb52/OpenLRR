@@ -13,7 +13,14 @@ add_executable(openlrr
     src/openlrr/linux/Platform.cpp
     src/openlrr/input/InputBinding.cpp
     src/openlrr/input/InputActions.cpp
+	src/openlrr/input/RenderCursor.cpp
     src/openlrr/renderer/VulkanRenderer.cpp
+    src/openlrr/renderer/PresentationViewport.cpp
+	src/openlrr/renderer/TextRenderer.cpp
+    src/openlrr/dev/RendererDiagnostics.cpp
+	src/openlrr/dev/GuiDiagnostics.cpp
+    src/openlrr/gui/GuiLayer.cpp
+	
 )
 
 target_include_directories(openlrr PRIVATE

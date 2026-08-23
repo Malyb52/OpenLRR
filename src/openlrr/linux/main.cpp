@@ -2,6 +2,10 @@
 #include "input/InputBinding.hpp"
 #include "input/InputActions.hpp"
 #include "renderer/VulkanRenderer.hpp"
+#include "settings/Settings.hpp"
+#include "settings/DisplayModes.hpp"
+#include "dev/RendererDiagnostics.hpp"
+#include "dev/GuiDiagnostics.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -12,6 +16,8 @@ int main()
 {
     using namespace OpenLRR::Platform;
     using Clock = std::chrono::steady_clock;
+
+    OpenLRR::Settings::AppSettings settings{};
 
     if (!Initialise()) {
         std::cerr << "Failed to initialise platform\n";
@@ -24,7 +30,9 @@ int main()
         return 1;
     }
 
-    if (!OpenLRR::Renderer::InitialiseVulkan()) {
+    if (!OpenLRR::Renderer::InitialiseVulkan(
+        settings.display.renderResolution))
+	{
         std::cerr << "Failed to initialise Vulkan\n";
         Shutdown();
         return 1;
@@ -257,12 +265,25 @@ int main()
             }
         }
 
-        if (!OpenLRR::Renderer::RenderFrame()) {
-            std::cerr
-                << "Vulkan frame rendering failed\n";
-            break;
-        }
+        if (!OpenLRR::Renderer::BeginFrame(
+				settings.display.renderResolution))
+		{
+			std::cerr << "Failed to begin renderer frame\n";
+			break;
+		}
 
+		if (OpenLRR::Renderer::IsFrameInProgress()) {
+			OpenLRR::Dev::GuiDiagnostics::Update();
+			OpenLRR::Dev::RendererDiagnostics::Update();
+
+			OpenLRR::Dev::RendererDiagnostics::RenderCheckerboard();
+			OpenLRR::Dev::GuiDiagnostics::Render();
+
+			if (!OpenLRR::Renderer::EndFrame()) {
+				std::cerr << "Failed to end renderer frame\n";
+				break;
+			}
+		}
         wasActive = active;
 
         std::this_thread::sleep_for(

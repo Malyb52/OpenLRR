@@ -1,8 +1,13 @@
 #pragma once
 
+#include "settings/Settings.hpp"
+#include "renderer/PresentationViewport.hpp"
+
 namespace OpenLRR::Renderer
 {
-    bool InitialiseVulkan();
+    bool InitialiseVulkan(
+		const OpenLRR::Settings::Resolution& renderResolution
+	);
 
     void SetClearColor(
         float red,
@@ -11,7 +16,29 @@ namespace OpenLRR::Renderer
         float alpha
     );
 
-    bool RenderFrame();
+    bool BeginFrame(
+		const OpenLRR::Settings::Resolution& renderResolution
+	);
+
+	bool EndFrame();
+	
+	bool IsFrameInProgress();
+	
+	int GetRenderWidth();
+    int GetRenderHeight();
+
+	PresentationViewport GetPresentationViewport();
+
+    void DrawFilledRect(
+        int x,
+        int y,
+        int width,
+        int height,
+        float red,
+        float green,
+        float blue,
+        float alpha
+    );
 
     void ShutdownVulkan();
 }
